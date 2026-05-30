@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import type { Metadata } from 'next';
 import BookingForm from '@/components/booking/BookingForm';
 
@@ -22,7 +23,9 @@ export default function ReservasPage() {
           </p>
         </div>
 
-        <BookingForm />
+        <Suspense fallback={<div className="text-center text-brand-orange py-12 font-body animate-pulse">A carregar formulário de reservas...</div>}>
+          <BookingForm />
+        </Suspense>
       </div>
     </div>
   );
