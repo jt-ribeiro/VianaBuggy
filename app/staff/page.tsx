@@ -55,7 +55,7 @@ export default async function StaffTodayPage() {
     return acc;
   }, {} as Record<string, any>);
 
-  const salidas = Object.values(grouped).sort((a, b) => a.time.localeCompare(b.time));
+  const salidas = Object.values(grouped).sort((a: any, b: any) => a.time.localeCompare(b.time));
 
   return (
     <div className="space-y-6">
@@ -70,7 +70,7 @@ export default async function StaffTodayPage() {
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {salidas.map((saida) => (
+          {salidas.map((saida: any) => (
             <Link 
               key={`${saida.time}-${saida.tourId}`} 
               href={`/staff/saida/${today}/${saida.time.replace(':', '-')}/${saida.tourId}/checkin`}
