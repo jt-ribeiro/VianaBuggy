@@ -27,7 +27,7 @@ export default async function AdminSaidas() {
   }
 
   // Group by slot_date > slot_time > tour_id
-  const groups: Record<string, any[]> = {};
+  const groups: Record<string, any> = {};
 
   reservations?.forEach((res) => {
     const key = `${res.slot_date}_${res.slot_time}_${res.tour_id}`;
