@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { ReactNode } from 'react';
 import { Calendar, Clock } from 'lucide-react';
+import StaffLogoutButton from './StaffLogoutButton';
 
 export const metadata = {
   title: 'Staff Panel - Viana Buggy',
@@ -15,7 +16,7 @@ export default function StaffLayout({ children }: { children: ReactNode }) {
         <div className="text-xl font-heading font-bold text-brand-orange">
           VIANA BUGGY <span className="text-brand-white">STAFF</span>
         </div>
-        <nav className="flex gap-6">
+        <nav className="flex items-center gap-6">
           <Link href="/staff" className="flex items-center gap-2 hover:text-brand-orange transition-colors">
             <Clock className="w-5 h-5" />
             Hoje
@@ -24,6 +25,7 @@ export default function StaffLayout({ children }: { children: ReactNode }) {
             <Calendar className="w-5 h-5" />
             Semana
           </Link>
+          <StaffLogoutButton />
         </nav>
       </header>
 
@@ -41,6 +43,7 @@ export default function StaffLayout({ children }: { children: ReactNode }) {
           <Calendar className="w-6 h-6" />
           Semana
         </Link>
+        <StaffLogoutButton isMobile />
       </nav>
     </div>
   );
