@@ -4,6 +4,8 @@ import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { CheckCircle2, CalendarPlus, MessageCircle, ArrowLeft, MapPin } from 'lucide-react';
+import CreateGroupCard from '@/components/booking/CreateGroupCard';
+import { getReservationForGroup } from '@/app/actions/groups';
 
 function ConfirmationContent() {
   const searchParams = useSearchParams();
@@ -13,16 +15,29 @@ function ConfirmationContent() {
   
   const [reference, setReference] = useState<string | null>(ref);
   const [isMbway] = useState(method === 'mbway');
+  const [isLocal] = useState(method === 'local');
+  const [reservation, setReservation] = useState<any>(null);
 
   useEffect(() => {
-    // In a real app, if we have a session_id, we would fetch the booking details
-    // For now we just generate a random reference if it's not provided
+    // Generate a fallback ref if none exists
     if (sessionId && !reference) {
       const year = new Date().getFullYear();
       const randomStr = Math.random().toString(36).substring(2, 6).toUpperCase();
       setReference(`VB-${year}-${randomStr}`);
     }
-  }, [sessionId, reference]);
+
+    // Fetch the real reservation from DB
+    async function fetchReservation() {
+      if (sessionId || ref) {
+        const data = await getReservationForGroup(sessionId || undefined, ref || undefined);
+        if (data) {
+          setReservation(data);
+          setReference(data.booking_ref);
+        }
+      }
+    }
+    fetchReservation();
+  }, [sessionId, ref, reference]);
 
   const addToCalendarUrl = 'https://calendar.google.com/calendar/render?action=TEMPLATE&text=Tour+de+Buggy+-+Viana+Buggy&details=Passeio+Off-Road+com+a+Viana+Buggy&location=R.+da+Zona+Industrial+fase+2+pav.+N%C2%BA+9%2C+4935-232+Neiva%2C+Viana+do+Castelo';
   const whatsappUrl = `https://wa.me/message/S6TSV37E4PR5A1`;
@@ -52,6 +67,12 @@ function ConfirmationContent() {
           <p className="mb-2">Para confirmar a tua reserva, por favor efetua o pagamento por MBWay para o número:</p>
           <p className="text-xl font-bold text-white text-center my-4">+351 923 040 807</p>
           <p>Assim que o pagamento for recebido, a nossa equipa irá aprovar a reserva e receberás um email de confirmação com todos os detalhes.</p>
+        </div>
+      ) : isLocal ? (
+        <div className="text-white/80 font-body leading-relaxed mb-10 text-center bg-brand-black/50 p-6 rounded-sm border border-brand-gray-light">
+          <p className="mb-4 text-brand-orange font-semibold text-lg">Reserva recebida com sucesso!</p>
+          <p className="mb-2">O pagamento deverá ser efetuado <strong>em numerário no próprio local</strong> no dia da tua aventura.</p>
+          <p>Enviámos um email de confirmação com todos os detalhes. Prepara-te para muita adrenalina!</p>
         </div>
       ) : (
         <p className="text-white/80 font-body text-lg leading-relaxed mb-10">
@@ -96,6 +117,10 @@ function ConfirmationContent() {
             FALAR NO WHATSAPP
           </a>
         </div>
+
+        {reservation && !reservation.group_id && (
+          <CreateGroupCard reservationId={reservation.id} />
+        )}
 
         <div className="pt-8">
           <Link

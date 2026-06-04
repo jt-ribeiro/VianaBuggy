@@ -1,26 +1,34 @@
 import { NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
-import { tours } from '@/lib/tours';
 import { generateBookingRef } from '@/lib/utils';
+import { createServiceRoleClient } from '@/lib/supabase/service';
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { tourId, date, buggyType, quantity, name, email, phone, notes } = body;
+    const { tourId, date, timeSlot, buggyType, quantity, name, email, phone, notes, groupId } = body;
 
-    if (!tourId || !date || !buggyType || !quantity || !name || !email || !phone) {
+    if (!tourId || !date || !timeSlot || !buggyType || !quantity || !name || !email || !phone) {
       return NextResponse.json(
         { error: 'Faltam dados obrigatórios para a reserva.' },
         { status: 400 }
       );
     }
 
-    const tour = tours.find(t => t.id === tourId);
-    if (!tour) {
-      return NextResponse.json({ error: 'Tour não encontrado.' }, { status: 404 });
+    const supabase = createServiceRoleClient();
+    
+    // Fetch tour from DB
+    const { data: tour, error: tourError } = await supabase
+      .from('tours_config')
+      .select('name, price_2seater, price_4seater, image_url')
+      .eq('id', tourId)
+      .single();
+
+    if (tourError || !tour) {
+      return NextResponse.json({ error: 'Tour não encontrado na base de dados.' }, { status: 404 });
     }
 
-    const unitPrice = buggyType === '2-seater' ? tour.price2Seater : tour.price4Seater;
+    const unitPrice = buggyType === '2-seater' ? tour.price_2seater : tour.price_4seater;
     const amountCents = unitPrice * 100;
     const reference = generateBookingRef();
 
@@ -32,8 +40,8 @@ export async function POST(req: Request) {
             currency: 'eur',
             product_data: {
               name: `Reserva: ${tour.name}`,
-              description: `Buggy ${buggyType === '2-seater' ? '2 Lugares' : '4 Lugares'} - Data: ${new Date(date).toLocaleDateString('pt-PT')}`,
-              images: [`https://www.vianabuggy.pt${tour.image}`],
+              description: `Buggy ${buggyType === '2-seater' ? '2 Lugares' : '4 Lugares'} - Data: ${date} às ${timeSlot}`,
+              images: [`https://www.vianabuggy.pt${tour.image_url}`],
             },
             unit_amount: amountCents,
           },
@@ -49,6 +57,8 @@ export async function POST(req: Request) {
         tourId,
         tourName: tour.name,
         date,
+        timeSlot,
+        groupId: groupId || '',
         buggyType,
         quantity: quantity.toString(),
         name,
@@ -69,3 +79,4 @@ export async function POST(req: Request) {
     );
   }
 }
+

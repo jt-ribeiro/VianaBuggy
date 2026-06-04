@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Barlow_Condensed, DM_Sans } from 'next/font/google';
 import { Navbar, Footer, WhatsAppButton, CookieBanner, UrgencyBanner } from '@/components/layout';
+import PublicLayoutWrapper from '@/components/layout/PublicLayoutWrapper';
 import Script from 'next/script';
 import './globals.css';
 
@@ -145,23 +146,9 @@ export default function RootLayout({
         />
       </head>
       <body className="min-h-screen flex flex-col bg-brand-black text-white font-body antialiased">
-        {/* Urgency Banner */}
-        <UrgencyBanner />
-        
-        {/* Navigation */}
-        <Navbar />
-
-        {/* Main Content */}
-        <main className="flex-1">{children}</main>
-
-        {/* Footer */}
-        <Footer />
-
-        {/* WhatsApp Float */}
-        <WhatsAppButton />
-
-        {/* Cookie Consent */}
-        <CookieBanner />
+        <PublicLayoutWrapper>
+          {children}
+        </PublicLayoutWrapper>
 
         {/* Google Analytics 4 */}
         {ga4Id && (

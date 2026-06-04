@@ -14,39 +14,49 @@ import {
   Users, 
   CreditCard, 
   Smartphone,
-  AlertCircle
+  AlertCircle,
+  Clock,
+  Search,
+  Banknote
 } from 'lucide-react';
-import { tours } from '@/lib/tours';
 import { formatPrice } from '@/lib/utils';
 import { pt } from 'date-fns/locale';
-
-// Removed loadStripe
+import { validateGroupCode } from '@/app/actions/groups';
 
 type Step = 1 | 2 | 3;
 
 interface BookingState {
   tourId: string;
   date: Date | undefined;
+  timeSlot: string;
   buggyType: '2-seater' | '4-seater';
   quantity: number;
   name: string;
   email: string;
   phone: string;
   notes: string;
-  paymentMethod: 'stripe' | 'mbway';
+  paymentMethod: 'stripe' | 'mbway' | 'local';
+  groupCode: string;
+  groupId: string | null;
 }
 
-export default function BookingForm() {
+export default function BookingForm({ initialTours }: { initialTours: any[] }) {
   const searchParams = useSearchParams();
   const initialTour = searchParams.get('tour');
+  const queryGroupCode = searchParams.get('grupo');
   
   const [step, setStep] = useState<Step>(1);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   
+  const [isValidatingGroup, setIsValidatingGroup] = useState(false);
+  const [groupSuccessMessage, setGroupSuccessMessage] = useState<string | null>(null);
+  const [isGroupLocked, setIsGroupLocked] = useState(false);
+  
   const [formData, setFormData] = useState<BookingState>({
-    tourId: initialTour || tours[0].id,
+    tourId: initialTour || initialTours[0]?.id,
     date: undefined,
+    timeSlot: '',
     buggyType: '2-seater',
     quantity: 1,
     name: '',
@@ -54,24 +64,79 @@ export default function BookingForm() {
     phone: '',
     notes: '',
     paymentMethod: 'stripe',
+    groupCode: queryGroupCode || '',
+    groupId: null,
   });
 
-  const selectedTour = tours.find(t => t.id === formData.tourId) || tours[0];
+  const selectedTour = initialTours.find(t => t.id === formData.tourId) || initialTours[0];
   
   const unitPrice = formData.buggyType === '2-seater' 
-    ? selectedTour.price2Seater 
-    : selectedTour.price4Seater;
+    ? selectedTour?.price2Seater 
+    : selectedTour?.price4Seater;
     
-  const totalPrice = unitPrice * formData.quantity;
+  const totalPrice = (unitPrice || 0) * formData.quantity;
 
   const updateForm = (updates: Partial<BookingState>) => {
     setFormData(prev => ({ ...prev, ...updates }));
     setError(null);
   };
 
+  // Auto-validate group code if present in URL
+  useEffect(() => {
+    if (queryGroupCode) {
+      handleValidateGroup(queryGroupCode);
+    }
+  }, [queryGroupCode]);
+
+  // Reset time slot if tour or date changes and not locked
+  useEffect(() => {
+    if (!isGroupLocked) {
+      updateForm({ timeSlot: '' });
+    }
+  }, [formData.tourId, formData.date, isGroupLocked]);
+
+  const handleValidateGroup = async (code: string) => {
+    if (!code || code.length !== 6) {
+      setError('O código de grupo deve ter 6 caracteres.');
+      return;
+    }
+    
+    setIsValidatingGroup(true);
+    setError(null);
+    setGroupSuccessMessage(null);
+    
+    try {
+      const res = await validateGroupCode(code);
+      if (res.error) {
+        setError(res.error);
+        setIsGroupLocked(false);
+        updateForm({ groupId: null });
+      } else if (res.group) {
+        const [day, month, year] = res.group.slot_date.split('/');
+        const groupDate = new Date(Number(year), Number(month) - 1, Number(day));
+        
+        updateForm({
+          tourId: res.group.tour_id,
+          date: groupDate,
+          timeSlot: res.group.slot_time,
+          groupId: res.group.id,
+          quantity: Math.min(formData.quantity, res.availableBuggies || 1)
+        });
+        
+        setIsGroupLocked(true);
+        setGroupSuccessMessage(`Grupo "${res.group.name}" encontrado! Podes reservar até ${res.availableBuggies} buggy(s).`);
+      }
+    } catch (err) {
+      setError('Erro ao validar o grupo.');
+    } finally {
+      setIsValidatingGroup(false);
+    }
+  };
+
   const validateStep1 = () => {
     if (!formData.tourId) return 'Por favor seleciona um tour.';
     if (!formData.date) return 'Por favor escolhe uma data.';
+    if (!formData.timeSlot) return 'Por favor escolhe um horário.';
     if (formData.quantity < 1) return 'Quantidade mínima é 1 buggy.';
     return null;
   };
@@ -107,20 +172,25 @@ export default function BookingForm() {
     setIsSubmitting(true);
 
     try {
+      const payload = {
+        tourId: formData.tourId,
+        date: formData.date?.toLocaleDateString('pt-PT'),
+        timeSlot: formData.timeSlot,
+        buggyType: formData.buggyType,
+        quantity: formData.quantity,
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        notes: formData.notes,
+        groupId: formData.groupId,
+        paymentMethod: formData.paymentMethod
+      };
+
       if (formData.paymentMethod === 'stripe') {
         const response = await fetch('/api/stripe/checkout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tourId: formData.tourId,
-            date: formData.date?.toISOString(),
-            buggyType: formData.buggyType,
-            quantity: formData.quantity,
-            name: formData.name,
-            email: formData.email,
-            phone: formData.phone,
-            notes: formData.notes,
-          }),
+          body: JSON.stringify(payload),
         });
         
         const data = await response.json();
@@ -135,11 +205,11 @@ export default function BookingForm() {
           throw new Error('URL de pagamento não encontrado');
         }
       } else {
-        // MBWay Booking
+        // MBWay or Local Booking
         const response = await fetch('/api/reserva', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(formData),
+          body: JSON.stringify(payload),
         });
         
         const data = await response.json();
@@ -148,7 +218,7 @@ export default function BookingForm() {
           throw new Error(data.error || 'Erro ao criar reserva');
         }
 
-        window.location.href = `/reservas/confirmacao?ref=${data.reference}&method=mbway`;
+        window.location.href = `/reservas/confirmacao?ref=${data.reference}&method=${formData.paymentMethod}`;
       }
     } catch (err: any) {
       setError(err.message || 'Ocorreu um erro inesperado. Tenta novamente.');
@@ -156,12 +226,22 @@ export default function BookingForm() {
     }
   };
 
-  // Only allow Saturdays and Sundays
   const isDateDisabled = (date: Date) => {
-    const day = date.getDay();
     const isPast = date.getTime() < new Date().setHours(0, 0, 0, 0);
-    return isPast || (day !== 0 && day !== 6);
+    if (isPast) return true;
+    
+    // Check if the selected tour has availableDays specified
+    if (selectedTour?.availableDays?.length > 0) {
+      const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
+      return !selectedTour.availableDays.includes(dayName);
+    }
+    
+    // Default fallback to weekend only if no config
+    const day = date.getDay();
+    return day !== 0 && day !== 6;
   };
+
+  const timeSlots = selectedTour?.timeSlots || [];
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -204,15 +284,47 @@ export default function BookingForm() {
             <p className="text-red-200 text-sm font-body">{error}</p>
           </div>
         )}
+        
+        {/* Success Alert */}
+        {groupSuccessMessage && step === 1 && (
+          <div className="bg-green-500/10 border border-green-500/50 rounded-sm p-4 mb-8 flex items-start gap-3 animate-fade-in">
+            <CheckCircle2 size={20} className="text-green-500 shrink-0 mt-0.5" />
+            <p className="text-green-200 text-sm font-body">{groupSuccessMessage}</p>
+          </div>
+        )}
 
         {/* STEP 1: Tour Details */}
         {step === 1 && (
           <div className="space-y-8 animate-fade-in">
+            {/* Group Code Field */}
+            <div className="bg-brand-gray border border-brand-gray-light rounded-sm p-6">
+              <h3 className="font-heading text-xl font-bold text-white mb-2">TENS UM CÓDIGO DE GRUPO?</h3>
+              <p className="text-sm font-body text-white/60 mb-4">Se um amigo já fez uma reserva, insere o código para te juntares à mesma saída.</p>
+              
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={formData.groupCode}
+                  onChange={(e) => updateForm({ groupCode: e.target.value.toUpperCase() })}
+                  maxLength={6}
+                  placeholder="Ex: BUGGY7"
+                  className="flex-1 bg-brand-black border border-brand-gray-light rounded-sm px-4 py-3 text-white font-body focus:border-brand-orange focus:ring-1 focus:ring-brand-orange outline-none transition-all uppercase tracking-widest font-bold"
+                />
+                <button
+                  onClick={() => handleValidateGroup(formData.groupCode)}
+                  disabled={isValidatingGroup || formData.groupCode.length !== 6}
+                  className="bg-brand-gray-light hover:bg-brand-orange text-white px-6 rounded-sm transition-colors disabled:opacity-50 flex items-center justify-center"
+                >
+                  {isValidatingGroup ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Search size={20} />}
+                </button>
+              </div>
+            </div>
+
             {/* Tour Selection */}
-            <div>
+            <div className={isGroupLocked ? 'opacity-50 pointer-events-none' : ''}>
               <h3 className="font-heading text-2xl font-bold text-white mb-4">ESCOLHE O TOUR</h3>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {tours.map(tour => (
+                {initialTours.map(tour => (
                   <button
                     key={tour.id}
                     onClick={() => updateForm({ tourId: tour.id })}
@@ -223,7 +335,7 @@ export default function BookingForm() {
                     }`}
                   >
                     <div className="relative h-24 mb-3 rounded-sm overflow-hidden">
-                      <Image src={tour.image} alt={tour.name} fill className="object-cover" />
+                      {tour.image && <Image src={tour.image} alt={tour.name} fill className="object-cover" />}
                     </div>
                     <h4 className="font-heading font-bold text-lg text-white mb-1">{tour.name}</h4>
                     <p className="text-brand-gray-text text-xs font-body mb-2">{tour.duration}</p>
@@ -233,11 +345,11 @@ export default function BookingForm() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-              {/* Date Selection */}
-              <div>
-                <h3 className="font-heading text-2xl font-bold text-white mb-4">ESCOLHE A DATA</h3>
-                <div className="bg-brand-gray border border-brand-gray-light rounded-sm p-4 flex justify-center">
+            <div className={`grid grid-cols-1 md:grid-cols-2 gap-8`}>
+              {/* Date & Time Selection */}
+              <div className={isGroupLocked ? 'opacity-50 pointer-events-none' : ''}>
+                <h3 className="font-heading text-2xl font-bold text-white mb-4">ESCOLHE A DATA E HORA</h3>
+                <div className="bg-brand-gray border border-brand-gray-light rounded-sm p-4 flex justify-center mb-4">
                   <DayPicker
                     mode="single"
                     selected={formData.date}
@@ -247,9 +359,31 @@ export default function BookingForm() {
                     className="rdp-dark"
                   />
                 </div>
-                <p className="text-brand-gray-text text-xs font-body mt-2 text-center">
-                  * Tours disponíveis apenas aos sábados e domingos
-                </p>
+                
+                {formData.date && timeSlots.length > 0 && (
+                  <div>
+                    <h4 className="font-heading text-lg font-bold text-white mb-2 flex items-center gap-2">
+                      <Clock size={16} className="text-brand-orange" />
+                      Horários Disponíveis
+                    </h4>
+                    <div className="grid grid-cols-2 gap-2">
+                      {timeSlots.map((time: string) => (
+                        <button
+                          key={time}
+                          onClick={() => updateForm({ timeSlot: time })}
+                          className={`py-2 rounded-sm text-sm font-bold font-heading tracking-wider border transition-all ${
+                            formData.timeSlot === time
+                              ? 'bg-brand-orange/20 border-brand-orange text-brand-orange'
+                              : 'bg-brand-black border-brand-gray-light text-white/70 hover:border-white/30'
+                          }`}
+                        >
+                          {time}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                
               </div>
 
               {/* Buggy Details */}
@@ -267,7 +401,7 @@ export default function BookingForm() {
                     >
                       <Car size={32} />
                       <span className="font-body font-semibold text-sm">2 Lugares</span>
-                      <span className="font-heading text-lg text-white">€{selectedTour.price2Seater}</span>
+                      <span className="font-heading text-lg text-white">€{selectedTour?.price2Seater}</span>
                     </button>
                     <button
                       onClick={() => updateForm({ buggyType: '4-seater' })}
@@ -279,7 +413,7 @@ export default function BookingForm() {
                     >
                       <Users size={32} />
                       <span className="font-body font-semibold text-sm">4 Lugares</span>
-                      <span className="font-heading text-lg text-white">€{selectedTour.price4Seater}</span>
+                      <span className="font-heading text-lg text-white">€{selectedTour?.price4Seater}</span>
                     </button>
                   </div>
                 </div>
@@ -372,7 +506,7 @@ export default function BookingForm() {
           <div className="animate-fade-in">
             <h3 className="font-heading text-2xl font-bold text-white mb-6">MÉTODO DE PAGAMENTO</h3>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
               <button
                 onClick={() => updateForm({ paymentMethod: 'stripe' })}
                 className={`p-6 rounded-sm border flex flex-col items-center gap-3 transition-all ${
@@ -382,7 +516,7 @@ export default function BookingForm() {
                 }`}
               >
                 <CreditCard size={32} className={formData.paymentMethod === 'stripe' ? 'text-brand-orange' : ''} />
-                <span className="font-heading font-bold text-lg text-white">CARTÃO DE CRÉDITO</span>
+                <span className="font-heading font-bold text-lg text-white">CARTÃO</span>
                 <span className="text-xs font-body text-brand-gray-text text-center">
                   Pagamento 100% seguro via Stripe
                 </span>
@@ -399,7 +533,22 @@ export default function BookingForm() {
                 <Smartphone size={32} className={formData.paymentMethod === 'mbway' ? 'text-brand-orange' : ''} />
                 <span className="font-heading font-bold text-lg text-white">MBWAY</span>
                 <span className="text-xs font-body text-brand-gray-text text-center">
-                  Confirmação manual após pagamento
+                  Confirmação manual após transferência
+                </span>
+              </button>
+
+              <button
+                onClick={() => updateForm({ paymentMethod: 'local' })}
+                className={`p-6 rounded-sm border flex flex-col items-center gap-3 transition-all ${
+                  formData.paymentMethod === 'local' 
+                    ? 'bg-brand-gray border-brand-orange shadow-aggressive-sm' 
+                    : 'bg-brand-black border-brand-gray-light text-brand-gray-text hover:border-white/20'
+                }`}
+              >
+                <Banknote size={32} className={formData.paymentMethod === 'local' ? 'text-brand-orange' : ''} />
+                <span className="font-heading font-bold text-lg text-white">NO LOCAL</span>
+                <span className="text-xs font-body text-brand-gray-text text-center">
+                  Paga numerário no dia do tour
                 </span>
               </button>
             </div>
@@ -464,7 +613,7 @@ export default function BookingForm() {
           <div className="space-y-4 font-body text-sm">
             <div className="flex justify-between pb-4 border-b border-brand-gray-light/50">
               <span className="text-brand-gray-text">Tour</span>
-              <span className="text-white font-semibold text-right">{selectedTour.name}</span>
+              <span className="text-white font-semibold text-right">{selectedTour?.name}</span>
             </div>
             
             <div className="flex justify-between pb-4 border-b border-brand-gray-light/50">
@@ -473,6 +622,13 @@ export default function BookingForm() {
                 {formData.date ? formData.date.toLocaleDateString('pt-PT') : '-'}
               </span>
             </div>
+            
+            {formData.timeSlot && (
+              <div className="flex justify-between pb-4 border-b border-brand-gray-light/50">
+                <span className="text-brand-gray-text">Hora</span>
+                <span className="text-brand-orange font-bold text-right">{formData.timeSlot}</span>
+              </div>
+            )}
 
             <div className="flex justify-between pb-4 border-b border-brand-gray-light/50">
               <span className="text-brand-gray-text">Tipo de Buggy</span>

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { stripe } from '@/lib/stripe';
 import { sendBookingConfirmation, sendOperatorNotification, BookingData } from '@/lib/email';
+import { createServiceRoleClient } from '@/lib/supabase/service';
 import Stripe from 'stripe';
 
 const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET!;
@@ -33,15 +34,47 @@ export async function POST(req: Request) {
     if (session.metadata?.type === 'tour_booking') {
       const metadata = session.metadata;
       
+      const quantity = parseInt(metadata.quantity);
+      const peopleCount = metadata.buggyType === '2-seater' ? quantity * 2 : quantity * 4;
+
+      const supabase = createServiceRoleClient();
+
+      // Insert into Supabase reservations
+      const { error: insertError } = await supabase
+        .from('reservations')
+        .insert({
+          booking_ref: metadata.reference,
+          tour_id: metadata.tourId,
+          group_id: metadata.groupId || null,
+          slot_date: metadata.date,
+          slot_time: metadata.timeSlot,
+          buggy_type: metadata.buggyType,
+          buggy_quantity: quantity,
+          people_count: peopleCount,
+          customer_name: metadata.name,
+          customer_email: metadata.email,
+          customer_phone: metadata.phone,
+          notes: metadata.notes,
+          status: 'confirmado',
+          payment_method: 'Stripe',
+          stripe_session_id: session.id,
+          total_price: parseFloat(metadata.totalPrice),
+        });
+
+      if (insertError) {
+        console.error('Webhook DB Insert Error:', insertError);
+        // We still send emails even if DB fails so user has their voucher
+      }
+      
       const booking: BookingData = {
         reference: metadata.reference,
         customerName: metadata.name,
         customerEmail: metadata.email,
         customerPhone: metadata.phone,
         tourName: metadata.tourName,
-        date: metadata.date,
+        date: `${metadata.date} às ${metadata.timeSlot}`,
         buggyType: metadata.buggyType,
-        quantity: parseInt(metadata.quantity),
+        quantity: quantity,
         totalPrice: parseFloat(metadata.totalPrice),
         paymentMethod: 'Stripe (Cartão)',
         notes: metadata.notes,
@@ -54,7 +87,7 @@ export async function POST(req: Request) {
         sendOperatorNotification(booking),
       ]);
       
-      console.log(`Booking confirmed for session ${session.id}. Ref: ${booking.reference}`);
+      console.log(`Booking confirmed and saved for session ${session.id}. Ref: ${booking.reference}`);
     }
   }
 

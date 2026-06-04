@@ -1,27 +1,66 @@
 import { NextResponse } from 'next/server';
-import { tours } from '@/lib/tours';
 import { generateBookingRef } from '@/lib/utils';
 import { sendOperatorNotification, BookingData } from '@/lib/email';
+import { createServiceRoleClient } from '@/lib/supabase/service';
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { tourId, date, buggyType, quantity, name, email, phone, notes, paymentMethod } = body;
+    const { tourId, date, timeSlot, buggyType, quantity, name, email, phone, notes, paymentMethod, groupId } = body;
 
-    if (!tourId || !date || !buggyType || !quantity || !name || !email || !phone) {
+    if (!tourId || !date || !timeSlot || !buggyType || !quantity || !name || !email || !phone) {
       return NextResponse.json(
         { error: 'Faltam dados obrigatórios para a reserva.' },
         { status: 400 }
       );
     }
 
-    const tour = tours.find(t => t.id === tourId);
-    if (!tour) {
+    const supabase = createServiceRoleClient();
+
+    // 1. Fetch tour details to calculate price
+    const { data: tour, error: tourError } = await supabase
+      .from('tours_config')
+      .select('name, price_2seater, price_4seater')
+      .eq('id', tourId)
+      .single();
+
+    if (tourError || !tour) {
       return NextResponse.json({ error: 'Tour não encontrado.' }, { status: 404 });
     }
 
-    const unitPrice = buggyType === '2-seater' ? tour.price2Seater : tour.price4Seater;
+    const unitPrice = buggyType === '2-seater' ? tour.price_2seater : tour.price_4seater;
     const reference = generateBookingRef();
+    const totalPrice = unitPrice * quantity;
+    
+    // Calculate people count
+    const peopleCount = buggyType === '2-seater' ? quantity * 2 : quantity * 4;
+    const status = paymentMethod === 'mbway' ? 'pendente_mbway' : 'pendente';
+
+    // 2. Insert into Supabase reservations
+    const { error: insertError } = await supabase
+      .from('reservations')
+      .insert({
+        booking_ref: reference,
+        tour_id: tourId,
+        group_id: groupId || null,
+        slot_date: date,
+        slot_time: timeSlot,
+        buggy_type: buggyType,
+        buggy_quantity: quantity,
+        people_count: peopleCount,
+        customer_name: name,
+        customer_email: email,
+        customer_phone: phone,
+        notes: notes || '',
+        status: status,
+        payment_method: paymentMethod === 'mbway' ? 'MBWay' : paymentMethod,
+        total_price: totalPrice
+      });
+
+    if (insertError) {
+      console.error('Supabase Insert Error:', insertError);
+      throw new Error('Falha ao guardar a reserva na base de dados.');
+    }
 
     const booking: BookingData = {
       reference,
@@ -29,19 +68,16 @@ export async function POST(req: Request) {
       customerEmail: email,
       customerPhone: phone,
       tourName: tour.name,
-      date,
+      date: `${date} às ${timeSlot}`,
       buggyType,
       quantity,
-      totalPrice: unitPrice * quantity,
+      totalPrice,
       paymentMethod: paymentMethod === 'mbway' ? 'MBWay' : paymentMethod,
       notes,
-      status: paymentMethod === 'mbway' ? 'pendente_mbway' : 'pendente',
+      status,
     };
 
-    // Log to console instead of database for this implementation
-    console.log('Nova reserva criada:', booking);
-
-    // Notify operator about the new pending booking
+    // 3. Notify operator
     await sendOperatorNotification(booking);
 
     return NextResponse.json({ 
