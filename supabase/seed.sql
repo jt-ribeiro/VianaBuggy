@@ -182,3 +182,43 @@ INSERT INTO public.tours_config (
     3
 )
 ON CONFLICT (id) DO NOTHING;
+
+-- ==============================================================================
+-- 4. Extra Slots & Blocked Dates
+-- ==============================================================================
+
+-- Tabela para slots extra por data (não altera time_slots global do tour)
+CREATE TABLE IF NOT EXISTS public.extra_slots (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tour_id UUID REFERENCES public.tours_config(id) ON DELETE CASCADE,
+    date TEXT NOT NULL,
+    time TEXT NOT NULL,
+    created_by UUID REFERENCES public.admin_users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL,
+    UNIQUE(tour_id, date, time)
+);
+
+-- Tabela para bloqueios de datas/horários
+CREATE TABLE IF NOT EXISTS public.blocked_dates (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    date TEXT NOT NULL,
+    time_slot TEXT,
+    tour_id UUID REFERENCES public.tours_config(id) ON DELETE CASCADE,
+    reason TEXT,
+    created_by UUID REFERENCES public.admin_users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- RLS para extra_slots
+ALTER TABLE public.extra_slots ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admin can manage extra_slots" ON public.extra_slots FOR ALL USING (
+    EXISTS (SELECT 1 FROM public.admin_users WHERE id = auth.uid() AND role IN ('admin', 'staff') AND is_active = true)
+);
+CREATE POLICY "Public can read extra_slots" ON public.extra_slots FOR SELECT USING (true);
+
+-- RLS para blocked_dates
+ALTER TABLE public.blocked_dates ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Admin can manage blocked_dates" ON public.blocked_dates FOR ALL USING (
+    EXISTS (SELECT 1 FROM public.admin_users WHERE id = auth.uid() AND role IN ('admin', 'staff') AND is_active = true)
+);
+CREATE POLICY "Public can read blocked_dates" ON public.blocked_dates FOR SELECT USING (true);

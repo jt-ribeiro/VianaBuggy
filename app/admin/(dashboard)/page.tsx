@@ -4,8 +4,14 @@ import {
   Calendar, 
   CarFront, 
   TrendingUp, 
-  Clock 
+  Clock,
+  AlertTriangle,
+  ArrowRight,
+  Eye
 } from "lucide-react";
+import Link from "next/link";
+import { format, subDays, isBefore } from "date-fns";
+import { pt } from "date-fns/locale";
 
 export const revalidate = 0;
 
@@ -21,14 +27,14 @@ export default async function AdminDashboard() {
     .select('*', { count: 'exact', head: true })
     .eq('slot_date', today);
 
-  // 2. Buggies a sair hoje (sum of number_of_buggies)
+  // 2. Buggies a sair hoje
   const { data: buggiesData } = await supabase
     .from('reservations')
-    .select('number_of_buggies')
+    .select('buggy_quantity')
     .eq('slot_date', today)
-    .in('status', ['confirmed', 'completed']);
+    .in('status', ['confirmado', 'concluido']);
     
-  const buggiesSair = buggiesData?.reduce((acc, curr) => acc + (curr.number_of_buggies || 0), 0) || 0;
+  const buggiesSair = buggiesData?.reduce((acc, curr) => acc + (curr.buggy_quantity || 0), 0) || 0;
 
   // 3. Receita Semanal (Reservations created in the last 7 days, confirmed/completed)
   const sevenDaysAgo = new Date();
@@ -38,7 +44,7 @@ export default async function AdminDashboard() {
     .from('reservations')
     .select('total_price')
     .gte('created_at', sevenDaysAgo.toISOString())
-    .in('status', ['confirmed', 'completed']);
+    .in('status', ['confirmado', 'concluido']);
 
   const receitaSemanal = receitaData?.reduce((acc, curr) => acc + (curr.total_price || 0), 0) || 0;
 
@@ -46,8 +52,7 @@ export default async function AdminDashboard() {
   const { count: pendentesMBWay } = await supabase
     .from('reservations')
     .select('*', { count: 'exact', head: true })
-    .eq('status', 'pending')
-    .eq('payment_method', 'mbway');
+    .eq('status', 'pendente_mbway');
 
   const stats = [
     {
@@ -80,6 +85,56 @@ export default async function AdminDashboard() {
     }
   ];
 
+  // Fetch Saídas de Hoje
+  const { data: saidasHojeData } = await supabase
+    .from('reservations')
+    .select('slot_time, tour_id, buggy_quantity, tours_config(name)')
+    .eq('slot_date', today)
+    .in('status', ['confirmado', 'concluido']);
+
+  const saidasHoje = Object.values((saidasHojeData || []).reduce((acc: any, curr: any) => {
+    const key = `${curr.slot_time}_${curr.tour_id}`;
+    if (!acc[key]) {
+      acc[key] = { time: curr.slot_time, tourName: curr.tours_config?.name, buggies: 0 };
+    }
+    acc[key].buggies += curr.buggy_quantity;
+    return acc;
+  }, {})).sort((a: any, b: any) => a.time.localeCompare(b.time));
+
+  // Fetch Reservas Recentes (últimas 5)
+  const { data: reservasRecentes } = await supabase
+    .from('reservations')
+    .select('id, booking_ref, customer_name, status, total_price, created_at, tours_config(name)')
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  // Alertas
+  const twentyFourHoursAgo = subDays(new Date(), 1);
+  const { data: mbwayAtrasados } = await supabase
+    .from('reservations')
+    .select('id, customer_name, booking_ref')
+    .eq('status', 'pendente_mbway')
+    .lt('created_at', twentyFourHoursAgo.toISOString());
+
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  const tomorrowStr = tomorrow.toISOString().split('T')[0];
+  
+  const { data: saidasAmanhaData } = await supabase
+    .from('reservations')
+    .select('slot_time, tour_id, buggy_quantity, tours_config(name)')
+    .eq('slot_date', tomorrowStr)
+    .in('status', ['confirmado', 'concluido']);
+
+  const saidasAmanha = Object.values((saidasAmanhaData || []).reduce((acc: any, curr: any) => {
+    const key = `${curr.slot_time}_${curr.tour_id}`;
+    if (!acc[key]) {
+      acc[key] = { time: curr.slot_time, tourName: curr.tours_config?.name, buggies: 0 };
+    }
+    acc[key].buggies += curr.buggy_quantity;
+    return acc;
+  }, {})).filter((s: any) => s.buggies < 2);
+
   return (
     <div className="space-y-8">
       <div>
@@ -102,6 +157,114 @@ export default async function AdminDashboard() {
             </div>
           );
         })}
+      </div>
+
+      {((mbwayAtrasados && mbwayAtrasados.length > 0) || (saidasAmanha && saidasAmanha.length > 0)) && (
+        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-6">
+          <h2 className="text-lg font-heading font-bold text-red-500 uppercase flex items-center gap-2 mb-4">
+            <AlertTriangle size={20} />
+            Alertas que requerem atenção
+          </h2>
+          <div className="space-y-3">
+            {mbwayAtrasados?.map(res => (
+              <div key={res.id} className="flex items-center justify-between bg-brand-black/50 p-3 rounded border border-red-500/20">
+                <div>
+                  <span className="font-bold text-white">{res.customer_name}</span> tem um pagamento MBWay pendente há mais de 24h.
+                  <span className="text-xs text-brand-gray-text ml-2 font-mono">Ref: {res.booking_ref}</span>
+                </div>
+                <Link href="/admin/reservas" className="text-sm font-semibold text-red-500 hover:text-red-400">Ver Reserva</Link>
+              </div>
+            ))}
+            {saidasAmanha?.map((saida: any, idx) => (
+              <div key={idx} className="flex items-center justify-between bg-brand-black/50 p-3 rounded border border-yellow-500/20">
+                <div>
+                  <span className="text-yellow-500"><AlertTriangle size={14} className="inline mr-2"/>Baixa Ocupação Amanhã:</span>
+                  <span className="font-bold text-white ml-1">{saida.tourName} às {saida.time}</span> tem apenas {saida.buggies} buggy confirmado.
+                </div>
+                <Link href="/admin/saidas" className="text-sm font-semibold text-yellow-500 hover:text-yellow-400">Ver Calendário</Link>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid lg:grid-cols-2 gap-8">
+        {/* Saídas de Hoje */}
+        <div className="bg-brand-gray border border-brand-gray-light rounded-lg p-6 flex flex-col">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-heading font-bold text-brand-white uppercase">Saídas de Hoje</h2>
+            <Link href="/admin/saidas" className="text-sm text-brand-orange hover:text-brand-orange/80 flex items-center gap-1 font-semibold">
+              Calendário <ArrowRight size={16} />
+            </Link>
+          </div>
+          
+          <div className="flex-1 space-y-3">
+            {!saidasHoje || saidasHoje.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-brand-gray-text bg-brand-black/50 rounded border border-brand-gray-light/50 p-8 text-center">
+                Nenhuma saída agendada para hoje.
+              </div>
+            ) : (
+              (saidasHoje as any[]).map((saida, idx) => (
+                <div key={idx} className="flex items-center justify-between bg-brand-black p-4 rounded-lg border border-brand-gray-light">
+                  <div className="flex items-center gap-4">
+                    <div className="bg-brand-orange/20 text-brand-orange font-bold font-heading px-3 py-1 rounded">
+                      {saida.time}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-white">{saida.tourName}</h3>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-white flex items-center gap-1">
+                      {saida.buggies} <CarFront size={16} className="text-brand-gray-text" />
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* Reservas Recentes */}
+        <div className="bg-brand-gray border border-brand-gray-light rounded-lg p-6 flex flex-col">
+          <div className="flex items-center justify-between mb-6">
+            <h2 className="text-xl font-heading font-bold text-brand-white uppercase">Reservas Recentes</h2>
+            <Link href="/admin/reservas" className="text-sm text-brand-orange hover:text-brand-orange/80 flex items-center gap-1 font-semibold">
+              Ver Todas <ArrowRight size={16} />
+            </Link>
+          </div>
+
+          <div className="flex-1">
+            {!reservasRecentes || reservasRecentes.length === 0 ? (
+              <div className="h-full flex items-center justify-center text-brand-gray-text bg-brand-black/50 rounded border border-brand-gray-light/50 p-8 text-center">
+                Sem reservas recentes.
+              </div>
+            ) : (
+              <div className="divide-y divide-brand-gray-light/50">
+                {reservasRecentes.map((res: any) => (
+                  <div key={res.id} className="py-3 flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-sm">{res.customer_name}</div>
+                      <div className="text-xs text-brand-gray-text mt-0.5">{res.tours_config?.name} • <span className="font-mono">{res.booking_ref}</span></div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-mono font-bold text-brand-orange text-sm">{formatPrice(res.total_price)}</div>
+                      <div className="mt-1">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider ${
+                          res.status === 'confirmado' || res.status === 'concluido' ? 'bg-green-500/10 text-green-500' :
+                          res.status === 'pendente' || res.status === 'pendente_mbway' ? 'bg-yellow-500/10 text-yellow-500' : 
+                          'bg-red-500/10 text-red-500'
+                        }`}>
+                          {res.status.replace('_mbway', '')}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

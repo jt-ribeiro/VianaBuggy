@@ -8,7 +8,9 @@ import {
   CalendarCheck, 
   CarFront, 
   Users,
-  LogOut
+  LogOut,
+  Flag,
+  BarChart2
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
@@ -18,6 +20,7 @@ const navItems = [
   { name: "Tours", href: "/admin/tours", icon: Map },
   { name: "Reservas", href: "/admin/reservas", icon: CalendarCheck },
   { name: "Saídas", href: "/admin/saidas", icon: CarFront },
+  { name: "Relatórios", href: "/admin/relatorios", icon: BarChart2 },
   { name: "Equipa", href: "/admin/users", icon: Users },
 ];
 
